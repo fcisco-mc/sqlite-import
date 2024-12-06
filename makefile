@@ -16,19 +16,12 @@ csv-file = Output.csv
 sanitized-csv-file = Sanitized.csv
 
 #1 Full command to import multiple IIS logs into a sqlite database
-import-iis-sqlite: merge-iis-csv create-iis-sqlite-db import-iis-logs-sqlite clean
+import-iis-sqlite: create-iis-sqlite-db import-iis-logs-sqlite clean
 	@echo "IIS logs to SQLite database import complete. Database is available in file $(db-name)"
 	
 #2 Full command to import multiple AWS ALB logs into a sqlite database
-import-alb-sqlite: merge-alb-csv create-alb-sqlite-db preprocess-alb-logs import-alb-logs-sqlite clean
+import-alb-sqlite: create-alb-sqlite-db preprocess-alb-logs import-alb-logs-sqlite clean
 	@echo "ALB logs to SQLite database import complete. Database is available in file $(db-name)"
-
-# Condense multiple IIS logs in one csv file
-merge-iis-csv:
-	@echo "Starting merge of IIS logs..."
-	@head -4 $$(ls *.log | head -1) | tail -1 | sed 's/#Fields: //' > Output.csv
-	@tail -n +5 -q *.log  >> Output.csv
-	@echo "Merge finished"
 	
 # Create sqlite database and table with IIS logs column names - adapt table definition if using different columns
 create-iis-sqlite-db:
@@ -58,11 +51,13 @@ create-iis-sqlite-db:
 	@echo "Database $(db-name) and table $(table-name) created successfully"
 
 # Import csv file to sqlite database
+#sed is used to saninitize the records - " is replaced by ' to avoid unescaped character errors when importing to sqlite
 import-iis-logs-sqlite:
-	@echo "Importing logs data into sqlite table..."
-	#sed is used to saninitize the records - " is replaced by ' to avoid unescaped character errors when importing to sqlite
-	@sed "s/\"/'/g" $(csv-file) > $(sanitized-csv-file)
-	@sqlite3 $(db-name) ".mode csv" ".separator \" \"" ".import $(sanitized-csv-file) $(table-name)"
+	@echo "Starting merge of IIS logs..."
+	@head -4 $$(ls *.log | head -1) | tail -1 | sed 's/#Fields: //' > $(csv-file)
+	@tail -n +5 -q *.log | \
+	sed "s/\"/'/g" >> $(csv-file)
+	@sqlite3 $(db-name) ".mode csv" ".separator \" \"" ".import $(csv-file) $(table-name)"
 	@echo "Import complete"
 	
 clean:
@@ -75,12 +70,6 @@ clean-db:
 	@echo "Cleaning up sqlite database..."
 	@rm -f $(db-name)
 	@echo "Database file deleted"
-
-# Condense LB logs into one csv file
-merge-alb-csv:
-	@echo "Starting merge of LB logs..."
-	@tail -n +0 -q *.log  >> $(csv-file)
-	@echo "Merge finished"
 	
 # Create sqlite database and table with AWS ALB logs column names - adapt table definition if using different columns
 create-alb-sqlite-db:
@@ -114,36 +103,30 @@ create-alb-sqlite-db:
 	    target_port_list TEXT, \
 	    target_status_code_list TEXT, \
 	    classification TEXT, \
-	    classification_reason TEXT \
+	    classification_reason, TEXT \
+		dummy TEXT \
 	);" > create_table.sql
 	@sqlite3 $(db-name) < create_table.sql
 	@rm create_table.sql
 	@echo "Database $(db-name) and table $(table-name) created successfully."
 	
 preprocess-alb-logs:
-# Process the csv file to replace spaces with commas (,). If the chars are within double quotes, replace only , by ;. Else, print char
-	@echo "Preprocessing ALB logs..."
-	@awk 'BEGIN {in_quotes=0} \
-	{ \
-		for (i = 1; i <= length($$0); i++) { \
-			char = substr($$0, i, 1); \
-			if (char == "\"") { \
-				in_quotes = !in_quotes; \
-				printf "\047"; \
-			} else if (char == " " && !in_quotes) { \
-				printf ","; \
-			} else if (char == "," && in_quotes) { \
-				printf ";"; \
-			} else { \
-				printf "%s", char; \
-			} \
+# Process the log file - based on https://www.gnu.org/software/gawk/manual/html_node/Splitting-By-Content.html
+	@echo "Starting merge and sanitization of LB logs..."
+	@tail -n +0 -q *.log  | \
+	awk 'BEGIN { \
+			FPAT = "([^ ]+)|(\"[^\"]+\")"; \
 		} \
-		printf "\n"; \
-	}' $(csv-file) > $(sanitized-csv-file)
-
+		{ \
+			for (i = 1; i <= NF; i++) { \
+				gsub(/"/, "'\''", $$i); \
+				printf "%s| ", $$i; \
+			} \
+			printf "\n"; \
+		}' > $(sanitized-csv-file)
 	@echo "Processing complete"
 	
 import-alb-logs-sqlite:
 	@echo "Importing ALB logs data into sqlite table..."
-	@sqlite3 $(db-name) ".mode csv" ".separator \",\"" ".import $(sanitized-csv-file) $(table-name)"
+	@sqlite3 $(db-name) ".mode csv" ".separator '|'" ".import $(sanitized-csv-file) $(table-name)"
 	@echo "Import complete"
