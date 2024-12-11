@@ -14,14 +14,23 @@ db-name = database.db
 table-name = log_data
 csv-file = Output.csv
 sanitized-csv-file = Sanitized.csv
+create_indexes ?= false
 
 #1 Full command to import multiple IIS logs into a sqlite database
-import-iis-sqlite: create-iis-sqlite-db import-iis-logs-sqlite clean
-	@echo "IIS logs to SQLite database import complete. Database is available in file $(db-name)"
+import-iis-sqlite:
+	@if [ "$(create_indexes)" = "true" ]; then \
+		make -s create-iis-sqlite-db import-iis-logs-sqlite iis-create-indexes clean; \
+	else \
+		make -s create-iis-sqlite-db import-iis-logs-sqlite clean; \
+	fi
 	
 #2 Full command to import multiple AWS ALB logs into a sqlite database
-import-alb-sqlite: create-alb-sqlite-db preprocess-alb-logs import-alb-logs-sqlite clean
-	@echo "ALB logs to SQLite database import complete. Database is available in file $(db-name)"
+import-alb-sqlite:
+	@if [ "$(create_indexes)" = "true" ]; then \
+		make -s create-alb-sqlite-db preprocess-alb-logs import-alb-logs-sqlite alb-create-indexes clean; \
+	else \
+		make -s create-alb-sqlite-db preprocess-alb-logs import-alb-logs-sqlite clean; \
+	fi
 	
 # Create sqlite database and table with IIS logs column names - adapt table definition if using different columns
 create-iis-sqlite-db:
@@ -50,6 +59,24 @@ create-iis-sqlite-db:
 	@rm create_table.sql
 	@echo "Database $(db-name) and table $(table-name) created successfully"
 
+# Create indexes and update statistics
+iis-create-indexes:
+	@echo "Creating indexes in $(table-name) table..."
+	@echo "CREATE INDEX IF NOT EXISTS date_index ON $(table-name)(date);" > create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS time_index ON $(table-name)(time);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS date_index ON $(table-name)(date);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS time_index ON $(table-name)(time);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS cs_method_index ON $(table-name)(cs_method);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS cs_uri_stem_index ON $(table-name)(cs_uri_stem);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS c_ip_index ON $(table-name)(c_ip);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS sc_status_index ON $(table-name)(sc_status);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS OriginalIP_index ON $(table-name)(OriginalIP);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS date_time_index ON $(table-name)(date, time);" >> create_indexes.sql
+	@sqlite3 $(db-name) < create_indexes.sql	
+	@sqlite3 $(db-name) "ANALYZE;"
+	@rm create_indexes.sql
+	@echo "Indexes created and statistics updated"
+
 # Import csv file to sqlite database
 #sed is used to saninitize the records - " is replaced by ' to avoid unescaped character errors when importing to sqlite
 import-iis-logs-sqlite:
@@ -65,6 +92,7 @@ clean:
 	@rm -f $(csv-file)
 	@rm -f $(sanitized-csv-file)
 	@echo "Clean-up complete"
+	@echo "Logs imported to SQLite database successfully. Database is available in file $(db-name)"
 	
 clean-db:
 	@echo "Cleaning up sqlite database..."
@@ -110,6 +138,16 @@ create-alb-sqlite-db:
 	@rm create_table.sql
 	@echo "Database $(db-name) and table $(table-name) created successfully."
 	
+alb-create-indexes:
+	@echo "Creating indexes in $(table-name) table..."
+	@echo "CREATE INDEX IF NOT EXISTS time_index ON $(table-name)(time);" > create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS elb_status_code_index ON $(table-name)(elb_status_code);" >> create_indexes.sql
+	@echo "CREATE INDEX IF NOT EXISTS target_status_code_index ON $(table-name)(target_status_code);" >> create_indexes.sql
+	@sqlite3 $(db-name) < create_indexes.sql	
+	@sqlite3 $(db-name) "ANALYZE;"
+	@rm create_indexes.sql
+	@echo "Indexes created and statistics updated"
+	
 preprocess-alb-logs:
 # Process the log file - based on https://www.gnu.org/software/gawk/manual/html_node/Splitting-By-Content.html
 	@echo "Starting merge and sanitization of LB logs..."
@@ -129,4 +167,30 @@ preprocess-alb-logs:
 import-alb-logs-sqlite:
 	@echo "Importing ALB logs data into sqlite table..."
 	@sqlite3 $(db-name) ".mode csv" ".separator '|'" ".import $(sanitized-csv-file) $(table-name)"
+	@echo "Trimming fields..."
+	@echo "UPDATE $(table-name) \
+		SET \
+		type = LTRIM(type), \
+		time = LTRIM(time), \
+		elb = LTRIM(elb), \
+		client_port = LTRIM(client_port), \
+		target_port = LTRIM(target_port), \
+		request = LTRIM(request), \
+		user_agent = LTRIM(user_agent), \
+		ssl_cipher = LTRIM(ssl_cipher), \
+		ssl_protocol = LTRIM(ssl_protocol), \
+		target_group_arn = LTRIM(target_group_arn), \
+		trace_id = LTRIM(trace_id), \
+		domain_name = LTRIM(domain_name), \
+		chosen_cert_arn = LTRIM(chosen_cert_arn), \
+		request_creation_time = LTRIM(request_creation_time), \
+		actions_executed = LTRIM(actions_executed), \
+		redirect_url = LTRIM(redirect_url), \
+		lambda_error_reason = LTRIM(lambda_error_reason), \
+		target_port_list = LTRIM(target_port_list), \
+		target_status_code_list = LTRIM(target_status_code_list), \
+		classification = LTRIM(classification), \
+		classification_reason = LTRIM(classification_reason);" > trim_columns.sql	
+	@sqlite3 $(db-name) < trim_columns.sql
+	@rm trim_columns.sql
 	@echo "Import complete"
