@@ -8,4 +8,4 @@
 # Instructions
   1. Move this makefile to the same folder of all the .log files to be imported
   2. Open a linux command prompt (for Windows use WSL or cmder)
-  3. Run "make import-iis-sqllite" or "make "import-alb-sqlite"
+  3. Run "make import-iis-sqllite" or "make "import-alb-sqlite" (add option _create_indexes=true_ to create indexes in SQLite database for faster query executions)
