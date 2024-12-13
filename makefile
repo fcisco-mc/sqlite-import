@@ -132,7 +132,8 @@ create-alb-sqlite-db:
 	    target_status_code_list TEXT, \
 	    classification TEXT, \
 	    classification_reason, TEXT \
-		dummy TEXT \
+		dummy TEXT, \
+		dummy_2 TEXT \
 	);" > create_table.sql
 	@sqlite3 $(db-name) < create_table.sql
 	@rm create_table.sql
@@ -167,7 +168,6 @@ preprocess-alb-logs:
 import-alb-logs-sqlite:
 	@echo "Importing ALB logs data into sqlite table..."
 	@sqlite3 $(db-name) ".mode csv" ".separator '|'" ".import $(sanitized-csv-file) $(table-name)"
-	@echo "Trimming fields..."
 	@echo "UPDATE $(table-name) \
 		SET \
 		type = LTRIM(type), \

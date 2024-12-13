@@ -40,6 +40,35 @@ GROUP BY [date], HourMinute, [cs_uri_stem]
 ORDER BY [date], HourMinute
 LIMIT 100;
 
+-- Request average execution with percentage change; Replace <endpoint> placeholder
+WITH RequestData AS (
+    SELECT 
+        [date],
+        strftime('%H:%M', [time]) AS HourMinute,
+        COUNT(*) AS RequestCount,
+        [cs_uri_stem],
+        AVG([time_taken]) AS AvgExecutionTime,
+        LAG(AVG([time_taken])) OVER (PARTITION BY [cs_uri_stem] ORDER BY [date], strftime('%H:%M', [time])) AS PrevAvgExecutionTime
+    FROM log_Data
+	WHERE [cs_uri_stem] = <endpoint> -- Replace <endpoint>
+	-- AND [date] = 'yyyy-mm-dd' AND ([time] BETWEEN 'hh:mm:ss' AND 'hh:mm:ss')
+    GROUP BY [date], strftime('%H:%M', [time]), [cs_uri_stem]
+	LIMIT 100
+)
+SELECT 
+    [date],
+    HourMinute,
+    RequestCount,
+    [cs_uri_stem],
+	ROUND(AvgExecutionTime, 2) AS AvgExecutionTime,
+    ROUND(PrevAvgExecutionTime, 2) AS PrevAvgExecutionTime,
+    CASE 
+        WHEN PrevAvgExecutionTime IS NOT NULL THEN 
+            ROUND(((AvgExecutionTime - PrevAvgExecutionTime) * 100.0 / PrevAvgExecutionTime), 2)
+        ELSE NULL
+    END AS PercentageChange
+FROM RequestData
+
 
 --------- * ALB * ---------
 -- TOP Client IPs by number of requests
@@ -111,4 +140,31 @@ FROM log_data
 --WHERE strftime('%Y-%m-%d %H:%M', substr([time], 1, 16)) BETWEEN 'yyyy-mm-dd hh:mm' AND 'yyyy-mm-dd hh:mm'
 GROUP BY HourMinute, ClientIP
 ORDER BY HourMinute
+LIMIT 100;
+
+-- Request average execution times per endpoint
+WITH RequestData AS (
+    SELECT 
+        strftime('%Y-%m-%d %H:%M', substr([time], 1, 19)) AS HourMinute,
+        COUNT(*) AS RequestCount,
+        CASE
+			WHEN instr([request], '?') > 0 THEN substr([request], 1, instr([request], '?')-1)
+			ELSE [request]
+		END AS RequestEndpoint,
+        AVG([request_processing_time]) AS AvgRequestProcessingTime,
+        AVG([target_processing_time]) AS AvgTargetProcessingTime,
+        AVG([response_processing_time]) AS AvgResponseProcessingTime        
+    FROM log_Data
+    WHERE [request] like '%<endpoint>%' -- Replace <endpoint>
+    -- AND strftime('%Y-%m-%d %H:%M', substr([time], 1, 16)) BETWEEN 'yyyy-mm-dd hh:mm' AND 'yyyy-mm-dd hh:mm'
+    GROUP BY strftime('%Y-%m-%d %H:%M', substr([time], 1, 19)), RequestEndpoint
+)
+SELECT 
+    HourMinute,
+    RequestCount,
+    RequestEndpoint,
+    ROUND(AvgRequestProcessingTime, 2) AS AvgRequestProcessingTime,
+    ROUND(AvgTargetProcessingTime, 2) AS AvgTargetProcessingTime,
+    ROUND(AvgResponseProcessingTime, 2) AS AvgResponseProcessingTime
+FROM RequestData
 LIMIT 100;
